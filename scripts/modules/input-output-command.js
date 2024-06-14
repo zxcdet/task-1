@@ -1,60 +1,51 @@
-import {pipeline} from "node:stream/promises";
-import {access, constants, stat} from "node:fs/promises";
-import {createReadStream, createWriteStream, existsSync} from "node:fs";
+import { Transform } from "node:stream";
+import { access, constants, stat } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
 
-import {shiftCommand} from "./shift-command.js";
-import {helperGetAlias} from "../helpers/helper-get-alias.js";
-
-import {CeasarTransform} from "../helpers/ceasar-transform.js";
+import { program } from 'commander';
+import { decrypt, encrypt } from "caesar-encrypt";
 
 export async function inputOutputCommand() {
-    const inputPutAlias = ['--input', '-i'];
-    const outputAlias = ['--output', '-o'];
-    const actionAlias = ['--action', '-a'];
-    const argv = process.argv;
-    const stdOut = process.stdout;
-    const shift = shiftCommand();
+    const options = program.opts();
 
-    let correctOutput = helperGetAlias(outputAlias);
-    let inputAlias = helperGetAlias(inputPutAlias);
-    let correctAction = helperGetAlias(actionAlias);
+        const inputExist = existsSync(options.input);
+        const outputExist = existsSync(options.output);
 
+        if (!inputExist && options.input) {
+            throw `No file ${options.input}!`;
+        }
 
-    if (correctOutput && !inputAlias) {
-        throw 'Output use with input!';
-    }
+        const statInput = await stat(options.input);
 
-    const instanceTransform = new CeasarTransform(argv, correctAction, shift);
-
-    if (inputAlias) {
-        const paramInput = argv[argv.indexOf(inputAlias) + 1].trim();
-        const paramOutput = argv[argv.indexOf(correctOutput) + 1].trim();
-        const statInput = await stat(paramInput);
         if (statInput.size === 0) {
             throw 'Empty file!';
         }
 
-        await access(paramInput, constants.R_OK).catch(() => {
+        await access(options.input, constants.R_OK).catch(() => {
             throw 'No Rad access!';
         })
-        if (correctOutput) {
-            if (existsSync(paramOutput)) {
-                await access(paramOutput, constants.W_OK).catch(() => {
-                    throw 'No Write access!';
-                });
-            }
-            await pipeline(
-                createReadStream(paramInput),
-                instanceTransform,
-                createWriteStream(paramOutput)
-            );
-            return;
+
+        if (outputExist && options.output) {
+            await access(options.output, constants.W_OK).catch(() => {
+                throw 'No Write access!';
+            });
         }
-        await pipeline(
-            createReadStream(paramInput),
+
+
+        const instanceTransform = new Transform({
+            transform(chunk, _, cb) {
+                if (options.action === 'encode') {
+                    cb(null, encrypt(chunk.toString(), options.shift));
+                } else {
+                    cb(null, decrypt(chunk.toString(), options.shift));
+                }
+            }
+        });
+
+         await pipeline(
+            createReadStream(options.input),
             instanceTransform,
-            stdOut
+            options.output ? createWriteStream(options.output, {flags: 'a'}) : process.stdout
         );
-        return;
-    }
 }
